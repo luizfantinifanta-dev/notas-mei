@@ -33,6 +33,16 @@
   .sit a { color: inherit; }
   tfoot td { font-weight: 600; }
   #etapa { color: var(--cinza); }
+  h2.secao { margin: 36px 0 6px; font-size: 17px; color: var(--verde); }
+  .ajuda { margin: 0 0 12px; color: var(--cinza); font-size: 14px; max-width: 900px; }
+  .soltar { border: 2px dashed var(--borda); border-radius: 8px; background: #fff; padding: 22px; text-align: center; color: var(--cinza); margin-bottom: 10px; }
+  .soltar.ativo { border-color: var(--verde); background: var(--verde-claro); color: var(--verde); }
+  .soltar span { margin: 0 6px; }
+  .link { color: var(--azul); text-decoration: underline; cursor: pointer; }
+  #anexos div { font-size: 14px; margin: 3px 0; }
+  #anexos .ok { color: var(--verde); }
+  #anexos .falha { color: var(--erro); }
+  a.btn-baixar { display: inline-block; padding: 5px 10px; border-radius: 6px; background: var(--azul); color: #fff; text-decoration: none; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -52,6 +62,15 @@
     <thead><tr><th></th><th>Linha</th><th>Empresa</th><th>Contrato</th><th>Evento</th><th>Comissão</th><th>Descrição da nota</th><th>Robô</th></tr></thead>
     <tbody id="lista"></tbody>
     <tfoot><tr><td colspan="5">Selecionadas: <span id="qtd">0</span></td><td class="valor" id="total">R$ 0,00</td><td colspan="2"></td></tr></tfoot>
+  </table>
+
+  <h2 class="secao">Nota oficial (DANFSe)</h2>
+  <p class="ajuda">O site pede verificação humana para baixar a nota oficial. Para cada nota abaixo: clique em <b>Baixar nota oficial</b> (precisa estar logada no Emissor Nacional neste navegador), faça a verificação e depois <b>arraste o PDF</b> baixado para a área tracejada — pode arrastar vários de uma vez. A página reconhece a nota, salva no Drive, troca o link do nº na planilha e apaga a cópia provisória.</p>
+  <div id="soltar" class="soltar">Arraste aqui os PDFs das notas oficiais <span>ou</span> <label class="link">escolha os arquivos<input type="file" id="arquivos" accept="application/pdf,.pdf" multiple hidden></label></div>
+  <div id="anexos"></div>
+  <table>
+    <thead><tr><th>NFS-e</th><th>Empresa</th><th>Contrato</th><th>Comissão</th><th>Nota oficial</th></tr></thead>
+    <tbody id="emitidas"></tbody>
   </table>
 </main>
 <script>
@@ -148,7 +167,52 @@
       .then(function (j) { if (!j.ok) throw new Error(j.erro); acompanhar(); })
       .catch(function (e) { ocupado = false; contar(); $('etapa').textContent = 'Erro: ' + e.message; });
   });
+  // ---- Nota oficial (DANFSe) ----
+  var DOWNLOAD = 'https://www.nfse.gov.br/EmissorNacional/Notas/Download/DANFSe/';
+  function carregarEmitidas() {
+    fetch('api/emitidas').then(function (r) { return r.json(); }).then(function (j) {
+      var faltam = j.emitidas.filter(function (e) { return !e.oficial; });
+      var feitas = j.emitidas.filter(function (e) { return e.oficial; }).slice(0, 10);
+      $('emitidas').innerHTML = faltam.concat(feitas).map(function (e) {
+        var acao = e.oficial
+          ? '<span class="sit conferida">✓ no Drive · <a href="' + esc(e.oficial.link) + '" target="_blank">abrir</a></span>'
+          : '<a class="btn-baixar" href="' + DOWNLOAD + esc(e.chave) + '" target="_blank" rel="noopener">Baixar nota oficial</a>';
+        return '<tr><td>' + esc(e.numero) + '</td><td>' + esc(e.empresa) + '</td><td>' + esc(e.contrato) + '</td><td class="valor">' + reais.format(e.comissao) + '</td><td>' + acao + '</td></tr>';
+      }).join('') || '<tr><td colspan="5">Nenhuma nota emitida por esta página ainda.</td></tr>';
+    });
+  }
+  function anexar(arquivos) {
+    var lista = Array.prototype.filter.call(arquivos, function (f) { return /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; });
+    if (!lista.length) return;
+    var fila = Promise.resolve();
+    lista.forEach(function (f) {
+      var linha = document.createElement('div');
+      linha.textContent = f.name + ': enviando…';
+      $('anexos').prepend(linha);
+      fila = fila.then(function () {
+        return fetch('api/oficial', { method: 'POST', headers: { 'content-type': 'application/pdf', 'x-nome': encodeURIComponent(f.name) }, body: f })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j.ok) throw new Error(j.erro);
+            linha.className = 'ok';
+            linha.textContent = f.name + ': ✓ NFS-e ' + j.numero + (j.jaTinha ? ' — já estava no Drive' : ' — salva no Drive e link da planilha atualizado') + (j.pendencias && j.pendencias.length ? ' (atenção: ' + j.pendencias.join('; ') + ')' : '');
+          })
+          .catch(function (e) { linha.className = 'falha'; linha.textContent = f.name + ': ✗ ' + e.message; });
+      });
+    });
+    fila.then(carregarEmitidas);
+  }
+  var zona = $('soltar');
+  ['dragenter', 'dragover'].forEach(function (ev) { zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('ativo'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('ativo'); }); });
+  zona.addEventListener('drop', function (e) { anexar(e.dataTransfer.files); });
+  $('arquivos').addEventListener('change', function () { anexar(this.files); this.value = ''; });
+  // Depois de uma emissão, a lista de emitidas também muda.
+  var acompanharOriginal = acompanhar;
+  acompanhar = function () { acompanharOriginal(); setTimeout(carregarEmitidas, 3000); };
+
   carregar();
+  carregarEmitidas();
 </script>
 </body>
 </html>

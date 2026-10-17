@@ -11,7 +11,17 @@ function doPost(e) {
     const configurado = String(SEGREDO).trim();
     if (!configurado || configurado === 'COLE_AQUI_O_SEGREDO' || String(d.segredo || '').trim() !== configurado) {
       // Diagnóstico sem revelar a senha: tamanho e se ainda é o texto padrão.
-      return resposta({ ok: false, erro: 'não autorizado', tamanhoNoScript: configurado.length, aindaPadrao: configurado === 'COLE_AQUI_O_SEGREDO', versao: 2 });
+      return resposta({ ok: false, erro: 'não autorizado', tamanhoNoScript: configurado.length, aindaPadrao: configurado === 'COLE_AQUI_O_SEGREDO', versao: 3 });
+    }
+    // Apagar (manda para a lixeira) — só arquivos que estão na pasta "Notas Mei".
+    if (d.acao === 'apagar') {
+      const alvo = DriveApp.getFileById(d.id);
+      const pais = alvo.getParents();
+      let naPasta = false;
+      while (pais.hasNext()) if (pais.next().getId() === PASTA_ID) naPasta = true;
+      if (!naPasta) return resposta({ ok: false, erro: 'arquivo fora da pasta Notas Mei' });
+      alvo.setTrashed(true);
+      return resposta({ ok: true, apagado: d.id });
     }
     const pasta = DriveApp.getFolderById(PASTA_ID);
     // Mesmo nome já existe? Devolve o que está lá (não duplica).

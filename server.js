@@ -6,9 +6,11 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet:
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { notasPendentes, gravarEmissao } = require('./lib/planilha');
+const fs = require('fs');
+const pdfParse = require('pdf-parse/lib/pdf-parse.js');
+const { notasPendentes, gravarEmissao, trocarLinkNota } = require('./lib/planilha');
 const { Emissor } = require('./lib/emissor');
-const { salvarNoDriveDela } = require('./lib/google');
+const { salvarNoDriveDela, apagarNoDriveDela } = require('./lib/google');
 const registro = require('./lib/registro');
 
 const PORTA = Number(process.env.PORTA || 47310);
@@ -148,7 +150,7 @@ rotas.post('/api/emitir', async (req, res) => {
         item.comprovante = 'telas/notas/' + path.basename(c.pdf);
         const d = await salvarNoDriveDela(c.pdf, nomeArquivo(n, numero) + '.pdf');
         item.drive = d.link;
-        registro.atualizar(emitida.chave, { drive: d.link });
+        registro.atualizar(emitida.chave, { drive: d.link, driveId: d.id });
       } catch (e) {
         pendencias.push('comprovante/Drive: ' + e.message.split('\n')[0]);
       }
@@ -171,6 +173,60 @@ rotas.post('/api/emitir', async (req, res) => {
     trabalho.fim = new Date().toISOString();
   }
 });
+
+// ---- Nota oficial (DANFSe) -------------------------------------------------
+// O download do DANFSe no Emissor Nacional pede verificação humana: ela baixa
+// no navegador dela e anexa aqui. A página reconhece a nota pela chave de
+// acesso dentro do PDF, salva no Drive, troca o link do nº na planilha e
+// apaga o comprovante (cópia da tela de consulta).
+const idDoLink = (link) => (/\/d\/([\w-]+)/.exec(link || '') || [])[1];
+
+rotas.get('/api/emitidas', (req, res) => {
+  const lista = registro.ler().map((x) => ({
+    numero: x.numero, chave: x.chave, linha: x.linha, contrato: x.contrato, empresa: x.empresa, comissao: x.comissao,
+    em: x.em, drive: x.drive, oficial: x.oficial || null,
+  }));
+  res.json({ ok: true, emitidas: lista.reverse() });
+});
+
+let anexando = Promise.resolve();
+rotas.post('/api/oficial', express.raw({ type: () => true, limit: '15mb' }), (req, res) => {
+  // Um anexo de cada vez (registro e planilha sem disputa).
+  anexando = anexando.then(() => anexarOficial(req, res)).catch(() => {});
+});
+
+async function anexarOficial(req, res) {
+  const nomeOriginal = decodeURIComponent(String(req.headers['x-nome'] || 'arquivo.pdf'));
+  try {
+    const corpo = req.body;
+    if (!Buffer.isBuffer(corpo) || corpo.slice(0, 5).toString() !== '%PDF-') throw new Error('não é um arquivo PDF.');
+    let texto = '';
+    try { texto = (await pdfParse(corpo)).text || ''; } catch (e) { /* PDF sem texto legível */ }
+    // O comprovante provisório (cópia da tela de consulta) também tem a chave:
+    // não pode passar por nota oficial.
+    if (/Portal de Gest[ãa]o NFS-e/i.test(texto) && /Visualiza[çc][ãa]o/i.test(texto)) throw new Error('este é o comprovante provisório (cópia da tela), não a nota oficial. Baixe pelo botão "Baixar nota oficial".');
+    const digitos = texto.replace(/\D/g, '') + ' ' + nomeOriginal.replace(/\D/g, '');
+    const nota = registro.ler().find((x) => digitos.includes(x.chave));
+    if (!nota) throw new Error('não achei neste PDF a chave de acesso de nenhuma nota emitida por esta página.');
+    if (nota.oficial) return res.json({ ok: true, numero: nota.numero, jaTinha: true, link: nota.oficial.link });
+    const arquivo = path.join(__dirname, 'state', 'oficiais', `${nota.chave}.pdf`);
+    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+    fs.writeFileSync(arquivo, corpo);
+    const d = await salvarNoDriveDela(arquivo, nomeArquivo(nota, nota.numero) + ' (nota oficial).pdf');
+    registro.atualizar(nota.chave, { oficial: { link: d.link, id: d.id, em: new Date().toISOString() } });
+    const pendencias = [];
+    try { await trocarLinkNota(nota, d.link); } catch (e) { pendencias.push('planilha: ' + e.message); }
+    const comprovanteId = nota.driveId || idDoLink(nota.drive);
+    if (comprovanteId && !pendencias.length) {
+      try { await apagarNoDriveDela(comprovanteId); registro.atualizar(nota.chave, { comprovanteApagado: true }); } catch (e) { pendencias.push('apagar comprovante: ' + e.message); }
+    }
+    console.log(`[oficial] NFS-e ${nota.numero}: DANFSe no Drive${pendencias.length ? ' · ' + pendencias.join(' | ') : ''}`);
+    res.json({ ok: true, numero: nota.numero, link: d.link, pendencias });
+  } catch (e) {
+    console.log(`[oficial] ${nomeOriginal}: ${e.message}`);
+    res.status(400).json({ ok: false, erro: e.message, arquivo: nomeOriginal });
+  }
+}
 
 // Sem a barra final os caminhos relativos da página quebram: redireciona.
 if (BASE_PATH) {
