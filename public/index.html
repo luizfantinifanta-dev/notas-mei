@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notas MEI</title>
+<style>
+  :root { --verde: #3d7a4f; --verde-claro: #e8f3ec; --azul: #2f3f8f; --cinza: #6b7280; --borda: #d9dee5; --fundo: #f6f7f9; --erro: #b42318; --erro-claro: #fdecea; --aviso: #8a5a00; --aviso-claro: #fff6e0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f2937; background: var(--fundo); }
+  header { background: #fff; border-bottom: 1px solid var(--borda); padding: 16px 28px; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { margin: 0; font-size: 20px; color: var(--verde); }
+  header span { color: var(--cinza); font-size: 13px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 28px 60px; }
+  .barra { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .barra .info { color: var(--cinza); margin-right: auto; }
+  button { font: inherit; border-radius: 6px; border: 1px solid var(--borda); background: #fff; padding: 8px 14px; cursor: pointer; }
+  button.primario { background: var(--azul); border-color: var(--azul); color: #fff; }
+  button.emitir { background: var(--verde); border-color: var(--verde); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .aviso { padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; background: var(--aviso-claro); color: var(--aviso); }
+  .aviso.erro { background: var(--erro-claro); color: var(--erro); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--borda); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--borda); }
+  th { background: #fafbfc; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--cinza); }
+  td.valor { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.desc { color: var(--cinza); font-size: 13px; max-width: 420px; }
+  tr.bloqueada td { background: #fbfbfb; color: #9aa1ab; }
+  .prob { color: var(--erro); font-size: 13px; }
+  .sit { font-size: 13px; white-space: nowrap; }
+  .sit.conferida { color: var(--verde); }
+  .sit.diferente, .sit.erro { color: var(--erro); }
+  .sit a { color: inherit; }
+  tfoot td { font-weight: 600; }
+  #etapa { color: var(--cinza); }
+</style>
+</head>
+<body>
+<header><h1>Notas MEI</h1><span>comissões "Assinado" sem nota fiscal · aba Comissão</span></header>
+<main>
+  <div class="aviso">Fase de teste: o robô <b>só preenche e confere</b> a nota no Emissor Nacional. Nada é emitido.</div>
+  <div id="erroGeral" class="aviso erro" hidden></div>
+  <div class="barra">
+    <span class="info" id="info">Carregando a planilha…</span>
+    <button id="btnAtualizar">Atualizar lista</button>
+    <button id="btnTodas">Selecionar todas</button>
+    <button id="btnTestar" class="primario" disabled>Testar preenchimento</button>
+    <button id="btnEmitir" class="emitir" disabled title="Ainda não liberado">Emitir selecionadas</button>
+  </div>
+  <p id="etapa"></p>
+  <table>
+    <thead><tr><th></th><th>Linha</th><th>Empresa</th><th>Contrato</th><th>Evento</th><th>Comissão</th><th>Descrição da nota</th><th>Robô</th></tr></thead>
+    <tbody id="lista"></tbody>
+    <tfoot><tr><td colspan="5">Selecionadas: <span id="qtd">0</span></td><td class="valor" id="total">R$ 0,00</td><td colspan="2"></td></tr></tfoot>
+  </table>
+</main>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var reais = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var notas = [], resultado = {};
+
+  function carregar() {
+    $('info').textContent = 'Carregando a planilha…';
+    $('erroGeral').hidden = true;
+    fetch('/api/pendentes').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) throw new Error(j.erro);
+      notas = j.pendentes;
+      var origem = j.fornecedores.length ? j.fornecedores[0].origem : '';
+      $('info').textContent = notas.length + ' nota(s) para emitir · fornecedores: ' + j.fornecedores.map(function (f) { return f.empresa; }).join(', ') + ' (' + origem + ')';
+      desenhar();
+    }).catch(function (e) { $('erroGeral').textContent = 'Erro ao ler a planilha: ' + e.message; $('erroGeral').hidden = false; $('info').textContent = ''; });
+  }
+
+  function desenhar() {
+    $('lista').innerHTML = notas.map(function (n) {
+      var bloq = n.problemas.length > 0, r = resultado[n.linha] || {};
+      var sit = '';
+      if (r.situacao === 'conferida') sit = '<span class="sit conferida">✓ conferida' + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
+      else if (r.situacao === 'diferente') sit = '<span class="sit diferente">✗ ' + esc((r.diferencas || []).join('; ')) + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
+      else if (r.situacao === 'erro') sit = '<span class="sit erro">erro: ' + esc(r.erro) + '</span>';
+      else if (r.situacao) sit = '<span class="sit">' + esc(r.situacao) + '…</span>';
+      return '<tr class="' + (bloq ? 'bloqueada' : '') + '">' +
+        '<td><input type="checkbox" data-linha="' + n.linha + '"' + (bloq ? ' disabled' : '') + '></td>' +
+        '<td>' + n.linha + '</td><td>' + esc(n.empresa) + '</td><td>' + esc(n.contrato) + '</td><td>' + esc(n.evento) + '</td>' +
+        '<td class="valor">' + reais.format(n.comissao) + '</td>' +
+        '<td class="desc">' + (bloq ? '<span class="prob">' + esc(n.problemas.join(' ')) + '</span>' : esc(n.descricao)) + '</td>' +
+        '<td>' + sit + '</td></tr>';
+    }).join('') || '<tr><td colspan="8">Nenhuma comissão "Assinado" sem nota.</td></tr>';
+    contar();
+  }
+
+  function selecionadas() {
+    return Array.prototype.map.call(document.querySelectorAll('#lista input:checked'), function (c) { return Number(c.dataset.linha); });
+  }
+  function contar() {
+    var s = selecionadas(), total = 0;
+    notas.forEach(function (n) { if (s.indexOf(n.linha) >= 0) total += n.comissao; });
+    $('qtd').textContent = s.length;
+    $('total').textContent = reais.format(total);
+    $('btnTestar').disabled = !s.length || ocupado;
+  }
+
+  var ocupado = false;
+  function acompanhar() {
+    fetch('/api/trabalho').then(function (r) { return r.json(); }).then(function (j) {
+      var t = j.trabalho;
+      if (!t) return;
+      $('etapa').textContent = t.etapa;
+      t.itens.forEach(function (i) { resultado[i.linha] = i; });
+      desenhar();
+      if (!t.fim) setTimeout(acompanhar, 1500);
+      else { ocupado = false; contar(); }
+    });
+  }
+
+  $('lista').addEventListener('change', contar);
+  $('btnAtualizar').addEventListener('click', function () { resultado = {}; $('etapa').textContent = ''; carregar(); });
+  $('btnTodas').addEventListener('click', function () {
+    var cs = document.querySelectorAll('#lista input:not(:disabled)');
+    var marcar = Array.prototype.some.call(cs, function (c) { return !c.checked; });
+    cs.forEach(function (c) { c.checked = marcar; });
+    contar();
+  });
+  $('btnTestar').addEventListener('click', function () {
+    var linhas = selecionadas();
+    ocupado = true; contar();
+    linhas.forEach(function (l) { resultado[l] = { situacao: 'aguardando' }; });
+    desenhar();
+    fetch('/api/testar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ linhas: linhas }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.erro); acompanhar(); })
+      .catch(function (e) { ocupado = false; contar(); $('etapa').textContent = 'Erro: ' + e.message; });
+  });
+  carregar();
+</script>
+</body>
+</html>
