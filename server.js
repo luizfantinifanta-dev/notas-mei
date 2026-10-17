@@ -6,8 +6,10 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet:
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { notasPendentes } = require('./lib/planilha');
+const { notasPendentes, gravarEmissao } = require('./lib/planilha');
 const { Emissor } = require('./lib/emissor');
+const { salvarNoDriveDela } = require('./lib/google');
+const registro = require('./lib/registro');
 
 const PORTA = Number(process.env.PORTA || 47310);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -90,6 +92,83 @@ rotas.post('/api/testar', async (req, res) => {
     await emissor.fechar();
     trabalho.fim = new Date().toISOString();
     console.log(`[teste] ${trabalho.itens.map((i) => `linha ${i.linha}: ${i.situacao}`).join(', ')}`);
+  }
+});
+
+// EMITIR DE VERDADE as notas escolhidas (uma de cada vez). Cada uma: confere
+// duplicidade, preenche, confere, emite, salva o comprovante no Drive dela e
+// grava o nº (clicável) e a data na planilha. Erro numa → segue para a próxima;
+// erro "incerto" (não sabe se emitiu) → PARA tudo.
+const nomeArquivo = (n, numero) => `NFS-e ${numero} - ${n.empresa} - R$ ${n.comissao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} - ${n.contrato}`.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 150);
+
+rotas.post('/api/emitir', async (req, res) => {
+  if (trabalho && !trabalho.fim) return res.status(409).json({ ok: false, erro: 'O robô já está trabalhando. Espere terminar.' });
+  if (req.body.confirmado !== true) return res.status(400).json({ ok: false, erro: 'Falta confirmar a emissão.' });
+  const linhas = (req.body.linhas || []).map(Number);
+  let notas;
+  try {
+    notas = (await notasPendentes()).pendentes.filter((n) => linhas.includes(n.linha) && !n.problemas.length);
+  } catch (e) {
+    return res.status(500).json({ ok: false, erro: e.message });
+  }
+  if (!notas.length) return res.status(400).json({ ok: false, erro: 'Nenhuma nota selecionada.' });
+  trabalho = { tipo: 'emissao', inicio: new Date().toISOString(), fim: null, etapa: 'entrando no Emissor Nacional…', itens: notas.map((n) => ({ linha: n.linha, situacao: 'aguardando' })) };
+  res.json({ ok: true });
+  console.log(`[emissão] ${notas.length} nota(s): linhas ${notas.map((n) => n.linha).join(', ')}`);
+
+  const emissor = new Emissor();
+  try {
+    await emissor.abrir();
+    for (const n of notas) {
+      const item = trabalho.itens.find((i) => i.linha === n.linha);
+      if (trabalho.parar) { item.situacao = 'nao-emitida'; item.erro = 'não tentada (a emissão anterior ficou incerta)'; continue; }
+      trabalho.etapa = `emitindo linha ${n.linha} (${n.contrato})…`;
+      const anterior = registro.jaEmitida(n);
+      if (anterior) { item.situacao = 'erro'; item.erro = `já emitida por esta página (NFS-e ${anterior.numero}) — a planilha não foi atualizada; ponha o nº na linha`; continue; }
+      item.situacao = 'emitindo';
+      let emitida;
+      try {
+        emitida = await emissor.emitir(n, { chavesConhecidas: registro.chaves() });
+      } catch (e) {
+        item.situacao = e.incerta ? 'incerta' : 'erro';
+        item.erro = e.message.split('\n')[0];
+        if (e.incerta) trabalho.parar = true;
+        console.log(`[emissão] linha ${n.linha}: ${item.situacao} — ${item.erro}`);
+        continue;
+      }
+      // Emitida: registra JÁ (antes de qualquer outra coisa poder falhar).
+      const numero = String(Number(emitida.chave.slice(23, 36)));
+      registro.adicionar({ linha: n.linha, contrato: n.contrato, empresa: n.empresa, comissao: n.comissao, numero, chave: emitida.chave });
+      Object.assign(item, { situacao: 'emitida', numero, chave: emitida.chave, avisos: emitida.avisos });
+      console.log(`[emissão] linha ${n.linha}: NFS-e ${numero}`);
+      const pendencias = [];
+      try {
+        trabalho.etapa = `NFS-e ${numero}: salvando o comprovante…`;
+        const c = await emissor.comprovante(emitida.chave, `NFSe-${numero}-linha-${n.linha}`);
+        item.comprovante = 'telas/notas/' + path.basename(c.pdf);
+        const d = await salvarNoDriveDela(c.pdf, nomeArquivo(n, numero) + '.pdf');
+        item.drive = d.link;
+        registro.atualizar(emitida.chave, { drive: d.link });
+      } catch (e) {
+        pendencias.push('comprovante/Drive: ' + e.message.split('\n')[0]);
+      }
+      try {
+        trabalho.etapa = `NFS-e ${numero}: gravando na planilha…`;
+        const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+        await gravarEmissao(n, { numero, dataIso: hoje, link: item.drive });
+        registro.atualizar(emitida.chave, { planilha: 'gravada' });
+      } catch (e) {
+        pendencias.push('planilha: ' + e.message.split('\n')[0]);
+      }
+      if (pendencias.length) { item.pendencias = pendencias; console.log(`[emissão] NFS-e ${numero}: ${pendencias.join(' | ')}`); }
+    }
+    const ok = trabalho.itens.filter((i) => i.situacao === 'emitida').length;
+    trabalho.etapa = `pronto — ${ok} de ${notas.length} nota(s) emitida(s)` + (trabalho.parar ? ' · PAROU: uma emissão ficou incerta, confira no site' : '');
+  } catch (e) {
+    trabalho.etapa = 'erro: ' + e.message.split('\n')[0];
+  } finally {
+    await emissor.fechar();
+    trabalho.fim = new Date().toISOString();
   }
 });
 

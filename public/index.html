@@ -38,14 +38,14 @@
 <body>
 <header><h1>Notas MEI</h1><span>comissões "Assinado" sem nota fiscal · aba Comissão</span></header>
 <main>
-  <div class="aviso">Fase de teste: o robô <b>só preenche e confere</b> a nota no Emissor Nacional. Nada é emitido.</div>
+  <div class="aviso"><b>Emitir selecionadas</b> emite as notas de verdade no Emissor Nacional (uma de cada vez), salva o PDF na pasta “Notas Mei” do Drive e grava o nº na planilha. <b>Testar preenchimento</b> só confere, sem emitir.</div>
   <div id="erroGeral" class="aviso erro" hidden></div>
   <div class="barra">
     <span class="info" id="info">Carregando a planilha…</span>
     <button id="btnAtualizar">Atualizar lista</button>
     <button id="btnTodas">Selecionar todas</button>
     <button id="btnTestar" class="primario" disabled>Testar preenchimento</button>
-    <button id="btnEmitir" class="emitir" disabled title="Ainda não liberado">Emitir selecionadas</button>
+    <button id="btnEmitir" class="emitir" disabled>Emitir selecionadas</button>
   </div>
   <p id="etapa"></p>
   <table>
@@ -78,10 +78,13 @@
       var sit = '';
       if (r.situacao === 'conferida') sit = '<span class="sit conferida">✓ conferida' + (r.nomeNoSite ? ' · ' + esc(r.nomeNoSite) : '') + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
       else if (r.situacao === 'diferente') sit = '<span class="sit diferente">✗ ' + esc((r.diferencas || []).join('; ')) + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
+      else if (r.situacao === 'emitida') sit = '<span class="sit conferida">✓ NFS-e ' + esc(r.numero) + (r.drive ? ' · <a href="' + esc(r.drive) + '" target="_blank">PDF no Drive</a>' : (r.comprovante ? ' · <a href="' + esc(r.comprovante) + '" target="_blank">comprovante</a>' : '')) + (r.pendencias ? '<br><span class="prob">' + esc(r.pendencias.join(' · ')) + '</span>' : '') + '</span>';
+      else if (r.situacao === 'incerta') sit = '<span class="sit erro">⚠ ' + esc(r.erro) + '</span>';
+      else if (r.situacao === 'nao-emitida') sit = '<span class="sit">' + esc(r.erro) + '</span>';
       else if (r.situacao === 'erro') sit = '<span class="sit erro">erro: ' + esc(r.erro) + '</span>';
       else if (r.situacao) sit = '<span class="sit">' + esc(r.situacao) + '…</span>';
       return '<tr class="' + (bloq ? 'bloqueada' : '') + '">' +
-        '<td><input type="checkbox" data-linha="' + n.linha + '"' + (bloq ? ' disabled' : '') + '></td>' +
+        '<td><input type="checkbox" data-linha="' + n.linha + '"' + (bloq || r.situacao === 'emitida' ? ' disabled' : '') + '></td>' +
         '<td>' + n.linha + '</td><td>' + esc(n.empresa) + '</td><td>' + esc(n.contrato) + '</td><td>' + esc(n.evento) + '</td>' +
         '<td class="valor">' + reais.format(n.comissao) + '</td>' +
         '<td class="desc">' + (bloq ? '<span class="prob">' + esc(n.problemas.join(' ')) + '</span>' : esc(n.descricao)) + '</td>' +
@@ -99,6 +102,7 @@
     $('qtd').textContent = s.length;
     $('total').textContent = reais.format(total);
     $('btnTestar').disabled = !s.length || ocupado;
+    $('btnEmitir').disabled = !s.length || ocupado;
   }
 
   var ocupado = false;
@@ -128,6 +132,18 @@
     linhas.forEach(function (l) { resultado[l] = { situacao: 'aguardando' }; });
     desenhar();
     fetch('api/testar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ linhas: linhas }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.erro); acompanhar(); })
+      .catch(function (e) { ocupado = false; contar(); $('etapa').textContent = 'Erro: ' + e.message; });
+  });
+  $('btnEmitir').addEventListener('click', function () {
+    var linhas = selecionadas(), total = 0;
+    notas.forEach(function (n) { if (linhas.indexOf(n.linha) >= 0) total += n.comissao; });
+    if (!window.confirm('Emitir DE VERDADE ' + linhas.length + ' nota(s) fiscal(is), total ' + reais.format(total) + '?\n\nO robô emite uma de cada vez no Emissor Nacional, salva o PDF no Drive e grava o número na planilha.')) return;
+    ocupado = true; contar();
+    linhas.forEach(function (l) { resultado[l] = { situacao: 'aguardando' }; });
+    desenhar();
+    fetch('api/emitir', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ linhas: linhas, confirmado: true }) })
       .then(function (r) { return r.json(); })
       .then(function (j) { if (!j.ok) throw new Error(j.erro); acompanhar(); })
       .catch(function (e) { ocupado = false; contar(); $('etapa').textContent = 'Erro: ' + e.message; });
