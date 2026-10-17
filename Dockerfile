@@ -6,7 +6,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY lib ./lib
-COPY config ./config
+
 COPY server.js ./
 COPY public ./public
 

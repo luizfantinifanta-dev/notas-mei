@@ -76,7 +76,7 @@
     $('lista').innerHTML = notas.map(function (n) {
       var bloq = n.problemas.length > 0, r = resultado[n.linha] || {};
       var sit = '';
-      if (r.situacao === 'conferida') sit = '<span class="sit conferida">✓ conferida' + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
+      if (r.situacao === 'conferida') sit = '<span class="sit conferida">✓ conferida' + (r.nomeNoSite ? ' · ' + esc(r.nomeNoSite) : '') + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
       else if (r.situacao === 'diferente') sit = '<span class="sit diferente">✗ ' + esc((r.diferencas || []).join('; ')) + (r.tela ? ' · <a href="' + r.tela + '" target="_blank">ver tela</a>' : '') + '</span>';
       else if (r.situacao === 'erro') sit = '<span class="sit erro">erro: ' + esc(r.erro) + '</span>';
       else if (r.situacao) sit = '<span class="sit">' + esc(r.situacao) + '…</span>';

@@ -74,6 +74,8 @@ rotas.post('/api/testar', async (req, res) => {
         const r = await emissor.preencher(n);
         item.situacao = r.diferencas.length ? 'diferente' : 'conferida';
         item.diferencas = r.diferencas;
+        item.avisos = r.avisos;
+        item.nomeNoSite = r.lido.nome;
         item.tela = 'telas/' + path.basename(r.tela) + '?t=' + Date.now();
       } catch (e) {
         item.situacao = 'erro';

@@ -7,6 +7,7 @@ services:
     env_file: .env
     volumes:
       - ./state:/app/state
+      - ./google-chave.json:/app/google-chave.json:ro
     labels:
       - traefik.enable=true
       - traefik.docker.network=n8n_default
