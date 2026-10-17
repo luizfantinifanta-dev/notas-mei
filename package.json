@@ -1,0 +1,17 @@
+{
+  "name": "notas-mei",
+  "version": "1.0.0",
+  "description": "Automação de emissão de NFS-e no Emissor Nacional (nfse.gov.br) para MEI, separada da automação da H&M Odontologia.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "playwright": "^1.63.0"
+  }
+}
