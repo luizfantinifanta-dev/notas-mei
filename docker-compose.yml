@@ -1,0 +1,24 @@
+# Serviço "Notas MEI" na VPS — separado da H&M. Só usa a rede do Traefik
+# (n8n_default) para ser publicado em https://n8n.hmodonto.online/notas-mei-ste/
+services:
+  notas-mei:
+    build: .
+    restart: always
+    env_file: .env
+    volumes:
+      - ./state:/app/state
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.notas-mei-ste.rule=Host(`n8n.hmodonto.online`) && PathPrefix(`/notas-mei-ste`)
+      - traefik.http.routers.notas-mei-ste.entrypoints=web,websecure
+      - traefik.http.routers.notas-mei-ste.tls=true
+      - traefik.http.routers.notas-mei-ste.tls.certresolver=mytlschallenge
+      - traefik.http.routers.notas-mei-ste.priority=100
+      - traefik.http.services.notas-mei-ste.loadbalancer.server.port=3000
+    networks:
+      - n8n_default
+
+networks:
+  n8n_default:
+    external: true

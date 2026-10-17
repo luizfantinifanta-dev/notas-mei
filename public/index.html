@@ -63,7 +63,7 @@
   function carregar() {
     $('info').textContent = 'Carregando a planilha…';
     $('erroGeral').hidden = true;
-    fetch('/api/pendentes').then(function (r) { return r.json(); }).then(function (j) {
+    fetch('api/pendentes').then(function (r) { return r.json(); }).then(function (j) {
       if (!j.ok) throw new Error(j.erro);
       notas = j.pendentes;
       var origem = j.fornecedores.length ? j.fornecedores[0].origem : '';
@@ -103,7 +103,7 @@
 
   var ocupado = false;
   function acompanhar() {
-    fetch('/api/trabalho').then(function (r) { return r.json(); }).then(function (j) {
+    fetch('api/trabalho').then(function (r) { return r.json(); }).then(function (j) {
       var t = j.trabalho;
       if (!t) return;
       $('etapa').textContent = t.etapa;
@@ -127,7 +127,7 @@
     ocupado = true; contar();
     linhas.forEach(function (l) { resultado[l] = { situacao: 'aguardando' }; });
     desenhar();
-    fetch('/api/testar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ linhas: linhas }) })
+    fetch('api/testar', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ linhas: linhas }) })
       .then(function (r) { return r.json(); })
       .then(function (j) { if (!j.ok) throw new Error(j.erro); acompanhar(); })
       .catch(function (e) { ocupado = false; contar(); $('etapa').textContent = 'Erro: ' + e.message; });
