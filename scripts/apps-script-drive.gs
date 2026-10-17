@@ -8,7 +8,11 @@ const SEGREDO = 'COLE_AQUI_O_SEGREDO';
 function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
-    if (!SEGREDO || SEGREDO === 'COLE_AQUI_O_SEGREDO' || d.segredo !== SEGREDO) return resposta({ ok: false, erro: 'não autorizado' });
+    const configurado = String(SEGREDO).trim();
+    if (!configurado || configurado === 'COLE_AQUI_O_SEGREDO' || String(d.segredo || '').trim() !== configurado) {
+      // Diagnóstico sem revelar a senha: tamanho e se ainda é o texto padrão.
+      return resposta({ ok: false, erro: 'não autorizado', tamanhoNoScript: configurado.length, aindaPadrao: configurado === 'COLE_AQUI_O_SEGREDO', versao: 2 });
+    }
     const pasta = DriveApp.getFolderById(PASTA_ID);
     // Mesmo nome já existe? Devolve o que está lá (não duplica).
     const existentes = pasta.getFilesByName(d.nome);
